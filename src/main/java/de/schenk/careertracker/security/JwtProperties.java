@@ -11,5 +11,8 @@ import java.time.Duration;
  * fine for local development but invalidates all tokens on every restart.
  */
 @ConfigurationProperties(prefix = "app.jwt")
-public record JwtProperties(String secret, @DefaultValue("PT1H") Duration expiration) {
+public record JwtProperties(
+        String secret,
+        @DefaultValue("PT1H") Duration expiration,
+        @DefaultValue("P7D") Duration refreshExpiration) {
 }

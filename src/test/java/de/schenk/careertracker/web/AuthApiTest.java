@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -40,6 +41,14 @@ class AuthApiTest {
     private ResultActions login(String username, String password) throws Exception {
         return mockMvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"username\":\"%s\",\"password\":\"%s\"}".formatted(username, password)));
+    }
+
+    private JsonNode readTokens(ResultActions actions) throws Exception {
+        return objectMapper.readTree(actions.andReturn().getResponse().getContentAsString());
+    }
+
+    private ResultActions postJson(String path, String json) throws Exception {
+        return mockMvc.perform(post(path).contentType(MediaType.APPLICATION_JSON).content(json));
     }
 
     @Test
@@ -71,6 +80,7 @@ class AuthApiTest {
         login("max", "supersecret1")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accessToken").isNotEmpty())
+                .andExpect(jsonPath("$.refreshToken").isNotEmpty())
                 .andExpect(jsonPath("$.tokenType").value("Bearer"))
                 .andExpect(jsonPath("$.expiresInSeconds").value(3600));
     }
@@ -106,5 +116,56 @@ class AuthApiTest {
 
         mockMvc.perform(get("/api/applications").header(HttpHeaders.AUTHORIZATION, "Bearer " + tampered))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void refreshRotatesTokensAndRejectsReuse() throws Exception {
+        register("max", "supersecret1").andExpect(status().isCreated());
+        String first = readTokens(login("max", "supersecret1").andExpect(status().isOk()))
+                .get("refreshToken").asText();
+
+        JsonNode second = readTokens(postJson("/api/auth/refresh", "{\"refreshToken\":\"%s\"}".formatted(first))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").isNotEmpty()));
+        assertThat(second.get("refreshToken").asText()).isNotEqualTo(first);
+
+        // the consumed token is dead ...
+        postJson("/api/auth/refresh", "{\"refreshToken\":\"%s\"}".formatted(first))
+                .andExpect(status().isUnauthorized());
+        // ... and replaying it burns the whole token family (theft detection)
+        postJson("/api/auth/refresh", "{\"refreshToken\":\"%s\"}".formatted(second.get("refreshToken").asText()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void refreshWithUnknownTokenReturns401() throws Exception {
+        postJson("/api/auth/refresh", "{\"refreshToken\":\"does-not-exist\"}")
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void logoutRevokesRefreshToken() throws Exception {
+        register("max", "supersecret1").andExpect(status().isCreated());
+        String refresh = readTokens(login("max", "supersecret1")).get("refreshToken").asText();
+        String body = "{\"refreshToken\":\"%s\"}".formatted(refresh);
+
+        postJson("/api/auth/logout", body).andExpect(status().isNoContent());
+        postJson("/api/auth/refresh", body).andExpect(status().isUnauthorized());
+        postJson("/api/auth/logout", body).andExpect(status().isNoContent());
+    }
+
+    @Test
+    void loginIsRateLimitedAfterRepeatedFailures() throws Exception {
+        String user = "brute" + System.nanoTime();
+        register(user, "supersecret1").andExpect(status().isCreated());
+
+        for (int i = 0; i < 5; i++) {
+            login(user, "wrong-password").andExpect(status().isUnauthorized());
+        }
+
+        // even the correct password is refused while the limit is active
+        login(user, "supersecret1")
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().exists(HttpHeaders.RETRY_AFTER));
     }
 }
