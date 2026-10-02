@@ -8,8 +8,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -23,6 +28,8 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class JobApplicationServiceTest {
 
+    private static final String OWNER = "alice";
+
     @Mock
     private JobApplicationRepository repository;
 
@@ -30,48 +37,69 @@ class JobApplicationServiceTest {
         return new JobApplicationService(repository);
     }
 
+    private static JobApplication application(String company, JobStatus status) {
+        return new JobApplication(OWNER, company, "Developer", status, LocalDate.now(), null);
+    }
+
     @Test
     void createDefaultsStatusToAppliedAndDateToToday() {
         when(repository.save(any(JobApplication.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        JobApplication created = service().create(
+        JobApplication created = service().create(OWNER,
                 new JobApplicationRequest("Bechtle", "Junior Developer", null, null, null));
 
         assertThat(created.getStatus()).isEqualTo(JobStatus.APPLIED);
         assertThat(created.getAppliedAt()).isEqualTo(LocalDate.now());
+        assertThat(created.getOwner()).isEqualTo(OWNER);
     }
 
     @Test
-    void getThrowsWhenApplicationDoesNotExist() {
-        when(repository.findById(42L)).thenReturn(Optional.empty());
+    void getThrowsWhenApplicationDoesNotExistForOwner() {
+        when(repository.findByIdAndOwner(42L, OWNER)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service().get(42L))
+        assertThatThrownBy(() -> service().get(42L, OWNER))
                 .isInstanceOf(ApplicationNotFoundException.class)
                 .hasMessageContaining("42");
     }
 
     @Test
+    void listWithoutStatusUsesOwnerQuery() {
+        Pageable pageable = PageRequest.of(0, 10);
+        Page<JobApplication> page = new PageImpl<>(List.of(application("A", JobStatus.APPLIED)), pageable, 1);
+        when(repository.findByOwner(OWNER, pageable)).thenReturn(page);
+
+        assertThat(service().list(OWNER, null, pageable)).isSameAs(page);
+    }
+
+    @Test
+    void listWithStatusUsesFilteredOwnerQuery() {
+        Pageable pageable = PageRequest.of(0, 10);
+        Page<JobApplication> page = new PageImpl<>(List.of(application("A", JobStatus.OFFER)), pageable, 1);
+        when(repository.findByOwnerAndStatus(OWNER, JobStatus.OFFER, pageable)).thenReturn(page);
+
+        assertThat(service().list(OWNER, JobStatus.OFFER, pageable)).isSameAs(page);
+    }
+
+    @Test
     void updateRejectsInvalidStatusTransition() {
-        JobApplication existing = new JobApplication(
-                "ACME", "Developer", JobStatus.REJECTED, LocalDate.now(), null);
-        when(repository.findById(1L)).thenReturn(Optional.of(existing));
+        JobApplication existing = application("ACME", JobStatus.REJECTED);
+        when(repository.findByIdAndOwner(1L, OWNER)).thenReturn(Optional.of(existing));
 
         JobApplicationRequest request = new JobApplicationRequest(
                 "ACME", "Developer", JobStatus.INTERVIEW, null, null);
 
-        assertThatThrownBy(() -> service().update(1L, request))
+        assertThatThrownBy(() -> service().update(1L, OWNER, request))
                 .isInstanceOf(InvalidStatusTransitionException.class);
         verify(repository, never()).save(any());
     }
 
     @Test
     void updateAppliesValidTransition() {
-        JobApplication existing = new JobApplication(
-                "ACME", "Developer", JobStatus.APPLIED, LocalDate.now(), null);
-        when(repository.findById(1L)).thenReturn(Optional.of(existing));
+        JobApplication existing = application("ACME", JobStatus.APPLIED);
+        when(repository.findByIdAndOwner(1L, OWNER)).thenReturn(Optional.of(existing));
         when(repository.save(any(JobApplication.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        JobApplication updated = service().update(1L, new JobApplicationRequest(
+        JobApplication updated = service().update(1L, OWNER, new JobApplicationRequest(
                 "ACME", "Senior Developer", JobStatus.INTERVIEW, null, "Phone screen booked"));
 
         assertThat(updated.getStatus()).isEqualTo(JobStatus.INTERVIEW);
@@ -80,13 +108,21 @@ class JobApplicationServiceTest {
     }
 
     @Test
-    void statsContainsAllStatusesWithZeroDefaults() {
-        when(repository.findAll()).thenReturn(java.util.List.of(
-                new JobApplication("A", "X", JobStatus.APPLIED, LocalDate.now(), null),
-                new JobApplication("B", "Y", JobStatus.APPLIED, LocalDate.now(), null),
-                new JobApplication("C", "Z", JobStatus.OFFER, LocalDate.now(), null)));
+    void deleteOfForeignApplicationBehavesLikeNotFound() {
+        when(repository.findByIdAndOwner(7L, "mallory")).thenReturn(Optional.empty());
 
-        Map<JobStatus, Long> stats = service().stats();
+        assertThatThrownBy(() -> service().delete(7L, "mallory"))
+                .isInstanceOf(ApplicationNotFoundException.class);
+        verify(repository, never()).delete(any());
+    }
+
+    @Test
+    void statsContainsAllStatusesWithZeroDefaults() {
+        when(repository.countByStatusForOwner(OWNER)).thenReturn(List.of(
+                new Object[]{JobStatus.APPLIED, 2L},
+                new Object[]{JobStatus.OFFER, 1L}));
+
+        Map<JobStatus, Long> stats = service().stats(OWNER);
 
         assertThat(stats).hasSize(JobStatus.values().length);
         assertThat(stats.get(JobStatus.APPLIED)).isEqualTo(2L);

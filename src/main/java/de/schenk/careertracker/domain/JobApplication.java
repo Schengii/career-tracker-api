@@ -21,6 +21,9 @@ public class JobApplication {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "owner_username", nullable = false, length = 50, updatable = false)
+    private String owner;
+
     @Column(nullable = false, length = 120)
     private String company;
 
@@ -44,7 +47,9 @@ public class JobApplication {
         // required by JPA
     }
 
-    public JobApplication(String company, String position, JobStatus status, LocalDate appliedAt, String notes) {
+    public JobApplication(String owner, String company, String position, JobStatus status,
+                          LocalDate appliedAt, String notes) {
+        this.owner = owner;
         this.company = company;
         this.position = position;
         this.status = status;
@@ -59,6 +64,10 @@ public class JobApplication {
 
     public Long getId() {
         return id;
+    }
+
+    public String getOwner() {
+        return owner;
     }
 
     public String getCompany() {

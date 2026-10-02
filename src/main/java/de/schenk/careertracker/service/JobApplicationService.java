@@ -4,14 +4,19 @@ import de.schenk.careertracker.domain.JobApplication;
 import de.schenk.careertracker.domain.JobStatus;
 import de.schenk.careertracker.repository.JobApplicationRepository;
 import de.schenk.careertracker.web.dto.JobApplicationRequest;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.EnumMap;
-import java.util.List;
 import java.util.Map;
 
+/**
+ * All operations are scoped to an owner (the authenticated user). Accessing another
+ * user's application behaves exactly like accessing a non-existent one (404).
+ */
 @Service
 @Transactional
 public class JobApplicationService {
@@ -22,29 +27,29 @@ public class JobApplicationService {
         this.repository = repository;
     }
 
-    public JobApplication create(JobApplicationRequest request) {
+    public JobApplication create(String owner, JobApplicationRequest request) {
         JobStatus status = request.status() != null ? request.status() : JobStatus.APPLIED;
         LocalDate appliedAt = request.appliedAt() != null ? request.appliedAt() : LocalDate.now();
         JobApplication entity = new JobApplication(
-                request.company(), request.position(), status, appliedAt, request.notes());
+                owner, request.company(), request.position(), status, appliedAt, request.notes());
         return repository.save(entity);
     }
 
     @Transactional(readOnly = true)
-    public List<JobApplication> list(JobStatus status) {
+    public Page<JobApplication> list(String owner, JobStatus status, Pageable pageable) {
         if (status == null) {
-            return repository.findAllByOrderByAppliedAtDescIdDesc();
+            return repository.findByOwner(owner, pageable);
         }
-        return repository.findByStatusOrderByAppliedAtDescIdDesc(status);
+        return repository.findByOwnerAndStatus(owner, status, pageable);
     }
 
     @Transactional(readOnly = true)
-    public JobApplication get(Long id) {
-        return repository.findById(id).orElseThrow(() -> new ApplicationNotFoundException(id));
+    public JobApplication get(Long id, String owner) {
+        return repository.findByIdAndOwner(id, owner).orElseThrow(() -> new ApplicationNotFoundException(id));
     }
 
-    public JobApplication update(Long id, JobApplicationRequest request) {
-        JobApplication entity = get(id);
+    public JobApplication update(Long id, String owner, JobApplicationRequest request) {
+        JobApplication entity = get(id, owner);
         if (request.status() != null && !entity.getStatus().canTransitionTo(request.status())) {
             throw new InvalidStatusTransitionException(entity.getStatus(), request.status());
         }
@@ -60,22 +65,21 @@ public class JobApplicationService {
         return repository.save(entity);
     }
 
-    public void delete(Long id) {
-        JobApplication entity = get(id);
-        repository.delete(entity);
+    public void delete(Long id, String owner) {
+        repository.delete(get(id, owner));
     }
 
     /**
-     * Number of applications per status; statuses without entries are reported as 0.
+     * Number of the owner's applications per status; statuses without entries are reported as 0.
      */
     @Transactional(readOnly = true)
-    public Map<JobStatus, Long> stats() {
+    public Map<JobStatus, Long> stats(String owner) {
         Map<JobStatus, Long> result = new EnumMap<>(JobStatus.class);
         for (JobStatus status : JobStatus.values()) {
             result.put(status, 0L);
         }
-        for (JobApplication application : repository.findAll()) {
-            result.merge(application.getStatus(), 1L, Long::sum);
+        for (Object[] row : repository.countByStatusForOwner(owner)) {
+            result.put((JobStatus) row[0], (Long) row[1]);
         }
         return result;
     }
