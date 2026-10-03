@@ -135,3 +135,7 @@ src/main/java/de/schenk/careertracker/
 - Shared rate-limit store (Redis) for multi-instance deployments
 - Scheduled cleanup of expired refresh tokens
 - Roles / admin endpoints
+
+## License
+
+MIT, see [LICENSE](LICENSE).
