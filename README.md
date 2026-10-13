@@ -48,6 +48,8 @@ mvn spring-boot:run
 
 Without `JWT_SECRET` a random key is generated on every start (fine for development, but tokens become invalid after a restart).
 
+All settings are listed in [`.env.example`](.env.example): copy it to `.env`, fill in the values and load it with `set -a && . ./.env && set +a` (Spring Boot does not read `.env` by itself).
+
 ```bash
 # 1) register and log in
 curl -X POST http://localhost:8080/api/auth/register \
