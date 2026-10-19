@@ -1,6 +1,9 @@
 # Career Tracker API
 
 [![CI](https://github.com/Schengii/career-tracker-api/actions/workflows/ci.yml/badge.svg)](https://github.com/Schengii/career-tracker-api/actions/workflows/ci.yml)
+[![Java 21](https://img.shields.io/badge/Java-21-orange?logo=openjdk&logoColor=white)](https://openjdk.org/projects/jdk/21/)
+[![Spring Boot 3](https://img.shields.io/badge/Spring%20Boot-3-6DB33F?logo=springboot&logoColor=white)](https://spring.io/projects/spring-boot)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 REST API to track job applications through their whole lifecycle, built with **Java 21**, **Spring Boot 3**, **Spring Data JPA**, **Spring Security (JWT)** and tested with **JUnit 5**, **Mockito**, **MockMvc** and **Testcontainers**.
 
@@ -9,7 +12,7 @@ It is the Java backend counterpart to my full-stack [Job Application & Career Ma
 ## Features
 
 - CRUD for job applications with Bean Validation (`400` with per-field errors)
-- Status workflow enforced in the domain model: `APPLIED → INTERVIEW → OFFER → ACCEPTED`, with `REJECTED` / `WITHDRAWN` as exits. Invalid transitions return `409 Conflict`; terminal states cannot be left
+- Status workflow enforced in the domain model: `APPLIED ÔåÆ INTERVIEW ÔåÆ OFFER ÔåÆ ACCEPTED`, with `REJECTED` / `WITHDRAWN` as exits. Invalid transitions return `409 Conflict`; terminal states cannot be left
 - **Authentication**: stateless Spring Security with JWT (HS256) - register, login, bearer token, **rotating refresh tokens** with logout and reuse detection
 - **Login rate limiting**: 5 failed attempts per IP + username in 15 minutes, then `429` with `Retry-After`
 - **Flyway migrations** for the schema (Hibernate only validates, never alters)
@@ -20,6 +23,53 @@ It is the Java backend counterpart to my full-stack [Job Application & Career Ma
 - H2 in-memory by default, PostgreSQL via profile (also covered by a Testcontainers integration test)
 - Dockerfile (multi-stage) and GitHub Actions CI (`mvn verify`)
 
+## Architecture
+
+```mermaid
+flowchart LR
+    Client([Client / Swagger UI]) -->|HTTP + Bearer JWT| Sec[Security filter chain<br/>JWT validation, rate limiter]
+    Sec --> Web[web<br/>controllers, DTOs, error handler]
+    Web --> Svc[service<br/>business rules, authentication]
+    Svc --> Repo[repository<br/>owner-scoped JPA queries]
+    Repo --> DB[(H2 / PostgreSQL<br/>Flyway migrations)]
+```
+
+## Status workflow
+
+Enforced in `JobStatus.canTransitionTo`; an invalid transition returns `409 Conflict`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> APPLIED
+    APPLIED --> INTERVIEW
+    INTERVIEW --> OFFER
+    OFFER --> ACCEPTED
+    APPLIED --> REJECTED
+    INTERVIEW --> REJECTED
+    OFFER --> REJECTED
+    APPLIED --> WITHDRAWN
+    INTERVIEW --> WITHDRAWN
+    OFFER --> WITHDRAWN
+    ACCEPTED --> [*]
+    REJECTED --> [*]
+    WITHDRAWN --> [*]
+```
+
+## Authentication flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API
+    C->>A: POST /api/auth/login
+    A-->>C: accessToken + refreshToken
+    C->>A: GET /api/applications (Bearer accessToken)
+    A-->>C: 200 paged list
+    C->>A: POST /api/auth/refresh (refreshToken)
+    A-->>C: new token pair (old refresh token consumed)
+    C->>A: POST /api/auth/refresh (reused old token)
+    A-->>C: 401 and all refresh tokens revoked
+```
 ## Endpoints
 
 | Method | Path | Auth | Description |
@@ -111,11 +161,11 @@ mvn verify
 ```text
 src/main/resources/db/migration/   Flyway SQL migrations (V1__initial_schema.sql)
 src/main/java/de/schenk/careertracker/
-├── domain/        JobApplication and AppUser entities, JobStatus workflow
-├── repository/    Spring Data JPA repositories (owner-scoped queries)
-├── security/      Security filter chain, JWT encoder/decoder, token issuing, login rate limiter
-├── service/       Business rules, authentication, domain exceptions
-└── web/           Controllers, DTO records, exception handler, OpenAPI config
+Ôö£ÔöÇÔöÇ domain/        JobApplication and AppUser entities, JobStatus workflow
+Ôö£ÔöÇÔöÇ repository/    Spring Data JPA repositories (owner-scoped queries)
+Ôö£ÔöÇÔöÇ security/      Security filter chain, JWT encoder/decoder, token issuing, login rate limiter
+Ôö£ÔöÇÔöÇ service/       Business rules, authentication, domain exceptions
+ÔööÔöÇÔöÇ web/           Controllers, DTO records, exception handler, OpenAPI config
 ```
 
 ## Design decisions
